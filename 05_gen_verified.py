@@ -123,9 +123,13 @@ def main():
     ap.add_argument("--batch", type=int, default=6, help="diffusion candidates per forward")
     ap.add_argument("--rot-deg", type=float, default=7.0, dest="rot_deg")
     ap.add_argument("--beams", type=int, default=1)
-    ap.add_argument("--htr", default=f"{HTR_DEFAULT},cyttic/exp23-directfit-unfrozen",
-                    help="comma-separated verifiers; a variant is accepted if ANY passes 3/3 "
-                         "(exp10=matan-domain, exp23=font-domain; together they span both)")
+    ap.add_argument("--htr", default=HTR_DEFAULT,
+                    help="comma-separated verifiers; a variant is accepted if ANY passes 3/3. "
+                         "Default: exp10 (matan-domain) only — exp23 dropped, undertrained.")
+    ap.add_argument("--skip-unreadable", action="store_true", dest="skip_unreadable",
+                    help="skip bigrams whose clean FONT render fails the check. OFF by default: "
+                         "exp10 is font-blind on short crops, so the font gate is informational "
+                         "only — the --max-attempts cap bounds the cost instead.")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--save_path", default=f"{DIFFPEN}/hebrew_model")
@@ -165,8 +169,11 @@ def main():
     for s in range(0, len(font_imgs), 16):
         font_ok += passes_any(font_imgs[s:s + 16], texts[s:s + 16])[0]
     n_ok = sum(font_ok)
-    print(f"CALIBRATION: gate passes {n_ok}/{len(rows)} clean font renders "
-          f"({100 * n_ok / len(rows):.0f}%). Failing bigrams are verifier-limited, skipped.")
+    print(f"CALIBRATION: verifier reads {n_ok}/{len(rows)} clean font renders "
+          f"({100 * n_ok / len(rows):.0f}%)."
+          + ("" if cli.skip_unreadable else " Informational only (no skipping)."))
+    if not cli.skip_unreadable:
+        font_ok = [True] * len(rows)
 
     args = build_args(argparse.Namespace(steps=cli.steps, style=0, save_path=cli.save_path,
                       style_path=cli.style_path, stable_dif_path=cli.stable_dif_path,
