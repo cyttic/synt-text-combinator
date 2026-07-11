@@ -40,13 +40,27 @@ def pad_to_canvas(img):
     return ImageOps.pad(img, size=(CANVAS_W, CANVAS_H), color="white")
 
 
+INK_THR = 200  # grayscale < thr = ink (diffused backgrounds are noisy, not pure white)
+
+
 def tight(img, margin=4):
-    bbox = ImageOps.invert(img.convert("L")).getbbox()
-    if bbox is None:
+    a = np.asarray(img.convert("L")) < INK_THR
+    cols = np.where(a.any(axis=0))[0]; rows = np.where(a.any(axis=1))[0]
+    if len(cols) == 0:
         return img
-    x0, y0, x1, y1 = bbox
-    return img.crop((max(0, x0 - margin), max(0, y0 - margin),
-                     min(img.width, x1 + margin), min(img.height, y1 + margin)))
+    return img.crop((max(0, int(cols[0]) - margin), max(0, int(rows[0]) - margin),
+                     min(img.width, int(cols[-1]) + 1 + margin),
+                     min(img.height, int(rows[-1]) + 1 + margin)))
+
+
+def hcrop_margin_free(img):
+    """crop horizontally to real ink with NO margin, keep full height (baseline kept) —
+    saved units can be butted together in a word without whitespace."""
+    a = np.asarray(img.convert("L")) < INK_THR
+    cols = np.where(a.any(axis=0))[0]
+    if len(cols) == 0:
+        return img
+    return img.crop((int(cols[0]), 0, int(cols[-1]) + 1, img.height))
 
 
 class StyleBank:
@@ -130,6 +144,8 @@ def main():
                     help="skip bigrams whose clean FONT render fails the check. OFF by default: "
                          "exp10 is font-blind on short crops, so the font gate is informational "
                          "only — the --max-attempts cap bounds the cost instead.")
+    ap.add_argument("--styles", default=None,
+                    help="CSV of writer ids to restrict the style pool (one id = style-locked bank)")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--save_path", default=f"{DIFFPEN}/hebrew_model")
@@ -182,6 +198,9 @@ def main():
     diffusion, ema, vae, ddim, fe, tok, te, transform = load_model(args, [idx])
     bank = StyleBank(transform, cli.device)
     n_writers = len(bank.rev)
+    style_pool = ([int(x) for x in cli.styles.split(",")] if cli.styles
+                  else list(range(n_writers)))
+    print(f"style pool: {style_pool if cli.styles else f'all {n_writers}'}")
 
     ddim.set_timesteps(cli.steps)
     t_idx = min(int(len(ddim.timesteps) * (1.0 - cli.strength)), len(ddim.timesteps) - 1)
@@ -222,7 +241,8 @@ def main():
         accepted, attempts = [], 0
         while len(accepted) < cli.variants and attempts < cli.max_attempts:
             need = min(cli.batch, cli.variants - len(accepted) + 2)  # small over-ask
-            sids = random.sample(range(n_writers), need)
+            sids = (random.sample(style_pool, need) if len(style_pool) >= need
+                    else [random.choice(style_pool) for _ in range(need)])
             cands = gen(canvas, bigram, sids)
             total_gen += need; attempts += 1
             oks, tags = passes_any(cands, [bigram] * need)
@@ -232,7 +252,7 @@ def main():
         d = os.path.join(cli.out, stem); os.makedirs(d, exist_ok=True)
         canvas.save(os.path.join(d, "font.png"))
         for k, (sid, im, tg) in enumerate(accepted):
-            im.save(os.path.join(d, f"s{sid:03d}_v{k}.png"))
+            hcrop_margin_free(im).save(os.path.join(d, f"s{sid:03d}_v{k}.png"))
         total_ok += len(accepted)
         by_tag = ",".join(f"{s}:{t}" for s, _, t in accepted)
         meta.append(f"{stem}\t{bigram}\t{fontfile}\t{','.join(str(s) for s, _, _ in accepted)}")
