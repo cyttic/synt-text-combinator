@@ -1,0 +1,15 @@
+# heavyweight outputs — everything generated lands in out/
+out/
+# stray images/artifacts anywhere
+*.png
+*.jpg
+*.webp
+# model weights / tensors
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+# logs & caches
+*.log
+__pycache__/
+.cache/
